@@ -23,12 +23,14 @@ email_app = typer.Typer(help="Email reconnaissance — validation, patterns, bre
 social_app = typer.Typer(help="Social network profiling — username search across platforms")
 business_app = typer.Typer(help="Business investigation — org info, staff, contacts, records")
 leaks_app = typer.Typer(help="Leaked information — breaches, archives, exposed files")
+osint_app = typer.Typer(help="Deep OSINT — phone, EXIF, dark web, CT logs, WiFi geolocation")
 
 app.add_typer(domain_app, name="domain")
 app.add_typer(email_app, name="email")
 app.add_typer(social_app, name="social")
 app.add_typer(business_app, name="business")
 app.add_typer(leaks_app, name="leaks")
+app.add_typer(osint_app, name="osint")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -572,6 +574,90 @@ def config():
     console.print(table)
     console.print(f"\n[dim]Config file: {CONFIG_FILE}[/dim]")
     console.print("[dim]Run [bold]heavenlyeyes setup[/bold] to configure missing keys.[/dim]\n")
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  DEEP OSINT COMMANDS
+# ════════════════════════════════════════════════════════════════════════
+
+@osint_app.command("phone")
+def cmd_phone(phone: str = typer.Argument(help="Phone number (e.g. +1234567890)")):
+    """Phone number OSINT — carrier, format, social accounts, reverse lookup."""
+    banner()
+    from heavenlyeyes.modules.osint.phone import phone_lookup
+    phone_lookup(phone)
+
+
+@osint_app.command("exif")
+def cmd_exif(
+    source: str = typer.Argument(help="Image URL or local file path"),
+):
+    """Extract EXIF metadata from images — GPS, device, timestamps, privacy risks."""
+    banner()
+    from heavenlyeyes.modules.osint.exif import extract_exif
+    extract_exif(source)
+
+
+@osint_app.command("darkweb")
+def cmd_darkweb(
+    query: str = typer.Argument(help="Email, domain, or username to search"),
+    query_type: str = typer.Option("auto", "--type", "-t", help="Query type: auto, email, domain, username"),
+):
+    """Dark web monitor — IntelligenceX, Dehashed, breach pastes, leaked credentials."""
+    banner()
+    from heavenlyeyes.modules.osint.darkweb import darkweb_scan
+    darkweb_scan(query, query_type)
+
+
+@osint_app.command("ct-scan")
+def cmd_ct_scan(
+    domain: str = typer.Argument(help="Target domain"),
+    no_resolve: bool = typer.Option(False, "--no-resolve", help="Skip DNS resolution of subdomains"),
+):
+    """Certificate Transparency scan — discover subdomains from CT logs."""
+    banner()
+    from heavenlyeyes.modules.osint.ctmonitor import ct_scan
+    ct_scan(domain, resolve=not no_resolve)
+
+
+@osint_app.command("ct-watch")
+def cmd_ct_watch(
+    domain: str = typer.Argument(help="Target domain"),
+    interval: int = typer.Option(60, "--interval", "-i", help="Check interval in minutes"),
+    checks: int = typer.Option(24, "--checks", "-n", help="Max number of checks"),
+):
+    """CT log watch mode — continuously monitor for new certificates."""
+    banner()
+    from heavenlyeyes.modules.osint.ctmonitor import ct_watch
+    ct_watch(domain, interval_minutes=interval, max_checks=checks)
+
+
+@osint_app.command("wifi")
+def cmd_wifi(query: str = typer.Argument(help="Organization name or SSID to search")):
+    """WiFi SSID intelligence — search for wireless networks linked to a target."""
+    banner()
+    from heavenlyeyes.modules.osint.wifi import wifi_ssid_search
+    wifi_ssid_search(query)
+
+
+@osint_app.command("wifi-location")
+def cmd_wifi_location(
+    lat: float = typer.Argument(help="Latitude"),
+    lon: float = typer.Argument(help="Longitude"),
+    radius: float = typer.Option(0.5, "--radius", "-r", help="Search radius in km"),
+):
+    """Search for WiFi networks near a GPS location."""
+    banner()
+    from heavenlyeyes.modules.osint.wifi import wifi_location_search
+    wifi_location_search(lat, lon, radius)
+
+
+@osint_app.command("wifi-bssid")
+def cmd_wifi_bssid(bssid: str = typer.Argument(help="BSSID / MAC address (XX:XX:XX:XX:XX:XX)")):
+    """Geolocate a specific WiFi access point by BSSID."""
+    banner()
+    from heavenlyeyes.modules.osint.wifi import wifi_bssid_lookup
+    wifi_bssid_lookup(bssid)
 
 
 # ════════════════════════════════════════════════════════════════════════

@@ -23,6 +23,13 @@ DEFAULT_CONFIG = {
         "securitytrails": "",
         "censys_id": "",
         "censys_secret": "",
+        "intelx": "",
+        "dehashed": "",
+        "dehashed_email": "",
+        "leaklookup": "",
+        "numverify": "",
+        "wigle_name": "",
+        "wigle_token": "",
     },
     "settings": {
         "timeout": 10,
@@ -77,6 +84,42 @@ API_KEY_REGISTRY = {
         "name": "Censys (Secret)",
         "url": "https://search.censys.io/register",
         "features": "Internet-wide scan data, certificate search",
+    },
+    "intelx": {
+        "env": "HEYES_INTELX",
+        "name": "IntelligenceX",
+        "url": "https://intelx.io/signup",
+        "features": "Dark web search, paste monitoring, leaked data",
+    },
+    "dehashed": {
+        "env": "HEYES_DEHASHED",
+        "name": "Dehashed",
+        "url": "https://dehashed.com/register",
+        "features": "Breached credentials search, dark web monitoring",
+    },
+    "leaklookup": {
+        "env": "HEYES_LEAKLOOKUP",
+        "name": "LeakLookup",
+        "url": "https://leak-lookup.com/account/register",
+        "features": "Leaked database search by email/domain/username",
+    },
+    "numverify": {
+        "env": "HEYES_NUMVERIFY",
+        "name": "NumVerify",
+        "url": "https://numverify.com/signup",
+        "features": "Phone number validation, carrier lookup, line type",
+    },
+    "wigle_name": {
+        "env": "HEYES_WIGLE_NAME",
+        "name": "WiGLE (API Name)",
+        "url": "https://wigle.net/account",
+        "features": "WiFi geolocation, SSID search, BSSID lookup",
+    },
+    "wigle_token": {
+        "env": "HEYES_WIGLE_TOKEN",
+        "name": "WiGLE (API Token)",
+        "url": "https://wigle.net/account",
+        "features": "WiFi geolocation, SSID search, BSSID lookup",
     },
 }
 

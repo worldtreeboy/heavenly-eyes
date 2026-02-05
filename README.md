@@ -52,6 +52,11 @@
 - 👤 **Social profiling** — Username search across 30+ platforms in seconds
 - 🏢 **Business investigation** — Org info, staff, contacts, locations, records
 - 💀 **Leak detection** — Breaches, exposed files, archives, paste site monitoring
+- 📱 **Phone OSINT** — Carrier lookup, social account discovery, reverse lookup, Google dorks
+- 📸 **EXIF Extraction** — GPS coordinates, device fingerprinting, privacy risk detection
+- 🕸️ **Dark Web Monitor** — IntelligenceX, Dehashed, breach pastes, leaked credentials
+- 📜 **CT Log Monitor** — Real-time Certificate Transparency subdomain discovery + watch mode
+- 📡 **WiFi Geolocation** — WiGLE SSID search, BSSID lookup, location-based network mapping
 
 ---
 
@@ -125,12 +130,33 @@ heavenlyeyes dork example.com              # List 50+ dork queries
 heavenlyeyes dork example.com --execute    # Execute with stealth
 ```
 
+### Deep OSINT
+
+```bash
+heavenlyeyes osint phone +14155552671         # Phone number intelligence
+heavenlyeyes osint exif https://site.com/photo.jpg  # EXIF metadata extraction
+heavenlyeyes osint darkweb user@target.com    # Dark web breach monitoring
+heavenlyeyes osint ct-scan target.com         # CT log subdomain discovery
+heavenlyeyes osint ct-watch target.com -i 30  # Continuous CT monitoring
+heavenlyeyes osint wifi "Acme Corp"           # WiFi SSID search
+heavenlyeyes osint wifi-location 40.7 -74.0   # WiFi near GPS coords
+heavenlyeyes osint wifi-bssid AA:BB:CC:DD:EE:FF  # Geolocate access point
+```
+
+### Setup Wizard
+
+```bash
+heavenlyeyes setup    # Interactive API key configuration
+heavenlyeyes config   # View key status
+```
+
 ### Short Alias
 
 ```bash
 heyes pivot johndoe
 heyes scan target.com
 heyes dork target.com
+heyes osint phone +1234567890
 ```
 
 ---
@@ -344,6 +370,114 @@ Checks **35+ sensitive paths** including:
 </details>
 
 <details>
+<summary><h3>📱 Phone Number OSINT</h3></summary>
+
+```bash
+heyes osint phone +14155552671           # Full phone intelligence scan
+heyes osint phone "555-123-4567"         # Works with any format
+```
+
+| Feature | Details |
+|:---|:---|
+| Format Analysis | E.164 validation, country detection, digit count verification |
+| Carrier Lookup | NumVerify, AbstractAPI, Veriphone API integration |
+| Social Platforms | Telegram & WhatsApp registration detection |
+| Reverse Lookup | SpyDialer, ThatsThem, TruePeopleSearch, NumLookup |
+| OSINT Dorks | Auto-generated Google dorks in multiple phone formats |
+
+</details>
+
+<details>
+<summary><h3>📸 Image EXIF Extractor</h3></summary>
+
+```bash
+heyes osint exif https://target.com/image.jpg    # URL
+heyes osint exif /path/to/photo.jpg               # Local file
+```
+
+**Pure Python EXIF parser** — no external dependencies. Extracts:
+
+- **GPS Coordinates** → Google Maps link with exact location
+- **Camera Info** → Make, model, serial number, lens
+- **Timestamps** → Original capture date, modification date
+- **Software** → Editing software fingerprint
+- **Privacy Risks** → PII exposure alerts (artist name, owner, GPS)
+
+> **Security Tip:** If an image has GPS data, the exact location where the photo was taken is exposed. Many people forget to strip EXIF before uploading.
+
+</details>
+
+<details>
+<summary><h3>🕸️ Dark Web Monitor</h3></summary>
+
+```bash
+heyes osint darkweb user@target.com           # Email breach search
+heyes osint darkweb target.com -t domain      # Domain breach search
+heyes osint darkweb johndoe -t username       # Username breach search
+```
+
+Searches across **7 sources** simultaneously:
+
+| Source | Type | API Key |
+|:---|:---|:---:|
+| **IntelligenceX** | Dark web, paste sites, leaked databases | Required |
+| **Dehashed** | Breached credentials (email, password, username) | Required |
+| **LeakLookup** | Leaked database records | Required |
+| **Have I Been Pwned** | Breach notifications | Optional (free for domains) |
+| **XposedOrNot** | Free breach checker | Free |
+| **BreachDirectory** | Credential search | Optional (RapidAPI) |
+| **Paste Sites** | Pastebin, GitHub, GitLab search links | Free |
+
+</details>
+
+<details>
+<summary><h3>📜 Certificate Transparency Monitor</h3></summary>
+
+```bash
+heyes osint ct-scan target.com                    # Full CT scan
+heyes osint ct-scan target.com --no-resolve       # Skip DNS resolution
+heyes osint ct-watch target.com -i 30 -n 48       # Watch mode: check every 30min
+```
+
+Discovers subdomains from **4 CT log sources**:
+- **crt.sh** — Comodo CT log aggregator
+- **Cert Spotter** — SSLMate certificate monitoring
+- **Censys** — Internet-wide scan certificate data
+- **Google CT** — Google's transparency report
+
+**Features:**
+- DNS resolution of all discovered subdomains (threaded, 30 workers)
+- New certificate alerts (last 24h)
+- Wildcard certificate detection
+- Certificate issuer analysis
+- Expiring certificate warnings (30-day window)
+- **Watch mode** — continuous polling for new certs in real-time
+
+</details>
+
+<details>
+<summary><h3>📡 WiFi Geolocation</h3></summary>
+
+```bash
+heyes osint wifi "Acme Corp"                   # SSID pattern search
+heyes osint wifi-location 40.7128 -74.0060     # Networks near GPS coords
+heyes osint wifi-location 40.7 -74.0 -r 1.0   # 1km radius
+heyes osint wifi-bssid AA:BB:CC:DD:EE:FF       # Geolocate by MAC address
+```
+
+Powered by the **WiGLE** wireless network database (700M+ networks):
+
+| Feature | Details |
+|:---|:---|
+| SSID Search | Auto-generates corporate SSID patterns (Guest, Corp, Staff variants) |
+| Location Search | Find all WiFi networks within a radius of GPS coordinates |
+| BSSID Lookup | Geolocate a specific access point by MAC address |
+| Google Maps | Direct links to geolocated network positions |
+| Community Data | OpenWiFiMap fallback for community networks |
+
+</details>
+
+<details>
 <summary><h3>🧠 Intelligence Analysis</h3></summary>
 
 Automatically runs after a full scan. Produces:
@@ -359,18 +493,32 @@ Automatically runs after a full scan. Produces:
 
 ## ⚙️ Configuration
 
+### Setup Wizard (Recommended)
+
 ```bash
-heavenlyeyes config
+heavenlyeyes setup     # Interactive guided setup — walks you through each key
+heavenlyeyes config    # View current key status (configured vs missing)
 ```
 
-Config: `~/.heavenlyeyes/config.yaml`
+### Manual Config
+
+Config file: `~/.heavenlyeyes/config.yaml`
 
 ```yaml
 api_keys:
-  shodan: ""           # https://shodan.io
-  haveibeenpwned: ""   # https://haveibeenpwned.com/API/Key
-  hunter_io: ""        # https://hunter.io
-  virustotal: ""       # https://virustotal.com
+  shodan: ""             # https://shodan.io
+  haveibeenpwned: ""     # https://haveibeenpwned.com/API/Key
+  hunter_io: ""          # https://hunter.io
+  virustotal: ""         # https://virustotal.com
+  securitytrails: ""     # https://securitytrails.com
+  censys_id: ""          # https://search.censys.io
+  censys_secret: ""
+  intelx: ""             # https://intelx.io
+  dehashed: ""           # https://dehashed.com
+  leaklookup: ""         # https://leak-lookup.com
+  numverify: ""          # https://numverify.com
+  wigle_name: ""         # https://wigle.net
+  wigle_token: ""
 
 settings:
   timeout: 10
@@ -380,24 +528,39 @@ settings:
 
 Or use **environment variables**:
 ```bash
+# Core
 export HEYES_SHODAN="your-key"
 export HEYES_HAVEIBEENPWNED="your-key"
-export HEYES_HUNTER_IO="your-key"
-export HEYES_VIRUSTOTAL="your-key"
+export HEYES_SECURITYTRAILS="your-key"
 
-# For AI Synthesis (pick one)
+# Dark Web
+export HEYES_INTELX="your-key"
+export HEYES_DEHASHED="your-key"
+export HEYES_LEAKLOOKUP="your-key"
+
+# Deep OSINT
+export HEYES_NUMVERIFY="your-key"
+export HEYES_WIGLE_NAME="your-api-name"
+export HEYES_WIGLE_TOKEN="your-token"
+
+# AI Synthesis (pick one)
 export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
 ```
 
 > 💡 **HeavenlyEyes works without API keys** — keys unlock premium features:
 >
-> | Key | What It Unlocks |
-> |:---|:---|
-> | `HEYES_SHODAN` | Deep origin IP discovery, host verification, vuln scanning |
-> | `HEYES_HAVEIBEENPWNED` | Comprehensive breach database checks |
-> | `ANTHROPIC_API_KEY` | AI-powered Digital Footprint Summary (Claude) |
-> | `OPENAI_API_KEY` | AI-powered Digital Footprint Summary (GPT) |
+> | Key | Priority | What It Unlocks |
+> |:---|:---:|:---|
+> | `HEYES_SHODAN` | **Critical** | Deep origin IP discovery, host verification, vuln scanning |
+> | `HEYES_SECURITYTRAILS` | Recommended | Historical DNS records, premium subdomain data |
+> | `HEYES_HAVEIBEENPWNED` | Recommended | Comprehensive breach database checks |
+> | `HEYES_INTELX` | Recommended | Dark web search, paste monitoring, leaked data |
+> | `HEYES_DEHASHED` | Recommended | Breached credentials (email + password combos) |
+> | `HEYES_NUMVERIFY` | Optional | Phone number carrier lookup, line type detection |
+> | `HEYES_WIGLE_NAME/TOKEN` | Optional | WiFi geolocation, SSID mapping, BSSID lookup |
+> | `ANTHROPIC_API_KEY` | Optional | AI-powered Digital Footprint Summary (Claude) |
+> | `OPENAI_API_KEY` | Optional | AI-powered Digital Footprint Summary (GPT) |
 
 ---
 
@@ -415,9 +578,9 @@ heavenly-eyes/
 │   │   ├── synthesis.py          # AI Synthesis (LLM integration)
 │   │   └── dashboard.py          # Rich terminal dashboard
 │   ├── core/
-│   │   ├── config.py             # Config & API key management
+│   │   ├── config.py             # Config, API keys & setup wizard
 │   │   ├── utils.py              # Shared utilities & Rich display
-│   │   └── reporter.py           # JSON & HTML report generation
+│   │   └── reporter.py           # JSON & elite HTML report generation
 │   └── modules/
 │       ├── domain/
 │       │   ├── records.py        # WHOIS, DNS, SSL
@@ -434,8 +597,14 @@ heavenly-eyes/
 │       │   └── organization.py   # Org, staff, contacts, records
 │       ├── leaks/
 │       │   └── breaches.py       # Breaches, archives, exposed files
-│       └── intelligence/
-│           └── analyzer.py       # Risk scoring & recommendations
+│       ├── intelligence/
+│       │   └── analyzer.py       # Risk scoring & recommendations
+│       └── osint/                # ★ Deep OSINT Layer
+│           ├── phone.py          # Phone number intelligence
+│           ├── exif.py           # Image EXIF & GPS extraction
+│           ├── darkweb.py        # Dark web & breach monitoring
+│           ├── ctmonitor.py      # CT log monitoring & watch mode
+│           └── wifi.py           # WiFi geolocation (WiGLE)
 ├── tests/
 ├── pyproject.toml
 └── requirements.txt
@@ -454,12 +623,15 @@ Contributions are welcome! Here's how:
 5. **Open** a Pull Request
 
 ### Ideas for contributions:
-- [ ] Phone number OSINT module
-- [ ] IP geolocation mapping
-- [ ] Dark web monitoring
-- [ ] PDF report generation
-- [ ] Async/parallel scanning for speed
+- [x] ~~Phone number OSINT module~~ ✅ Built!
+- [x] ~~Dark web monitoring~~ ✅ Built!
+- [x] ~~Parallel scanning for speed~~ ✅ Built!
+- [ ] Subdomain takeover checker
+- [ ] JavaScript secret scanner
+- [ ] CORS misconfiguration scanner
+- [ ] Wayback URL miner
 - [ ] Plugin system for custom modules
+- [ ] PDF report generation
 
 ---
 
