@@ -51,6 +51,7 @@ def scan(
     from heavenlyeyes.modules.domain.cloud_storage import check_cloud_storage
     from heavenlyeyes.modules.domain.technologies import detect_technologies
     from heavenlyeyes.modules.domain.third_parties import detect_third_parties
+    from heavenlyeyes.modules.domain.origin_ip import find_origin_ip
     from heavenlyeyes.modules.email.recon import harvest_emails
     from heavenlyeyes.modules.business.organization import (
         investigate_organization, discover_locations, discover_staff,
@@ -74,6 +75,9 @@ def scan(
 
     if not skip_cloud:
         report.add_section("cloud_storage", check_cloud_storage(target))
+
+    # Origin IP (CDN/WAF bypass)
+    report.add_section("origin_ip", find_origin_ip(target))
 
     # Email
     report.add_section("emails", {"harvested": harvest_emails(target)})
@@ -162,6 +166,22 @@ def cmd_third_parties(domain: str = typer.Argument(help="Target domain")):
     banner()
     from heavenlyeyes.modules.domain.third_parties import detect_third_parties
     detect_third_parties(domain)
+
+
+@domain_app.command("origin")
+def cmd_origin(domain: str = typer.Argument(help="Target domain")):
+    """Find the real origin IP behind CDN/WAF (Cloudflare, Akamai, etc.)."""
+    banner()
+    from heavenlyeyes.modules.domain.origin_ip import find_origin_ip
+    find_origin_ip(domain)
+
+
+@domain_app.command("cdn-detect")
+def cmd_cdn_detect(domain: str = typer.Argument(help="Target domain")):
+    """Detect which CDN/WAF is protecting a domain."""
+    banner()
+    from heavenlyeyes.modules.domain.origin_ip import detect_cdn_waf
+    detect_cdn_waf(domain)
 
 
 # ════════════════════════════════════════════════════════════════════════
