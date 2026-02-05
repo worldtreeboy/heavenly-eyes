@@ -15,7 +15,7 @@
     ╚══════╝   ╚═╝   ╚══════╝╚══════╝
 ```
 
-### 👁️ *All-seeing OSINT Reconnaissance*
+### 👁️ *All-seeing OSINT Reconnaissance — v2.0*
 
 [![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
@@ -39,17 +39,19 @@
 
 ## ✨ Why HeavenlyEyes?
 
-> Most OSINT tools do one thing. **HeavenlyEyes does everything** — from a single command.
+> Most OSINT tools do one thing. **HeavenlyEyes does everything** — from a single input.
 
-- 🔍 **40+ recon techniques** in one tool
+- 🧬 **Recursive Pivot Engine** — give it a username, email, domain, or IP and it automatically branches out to map the entire digital footprint
+- 🥷 **Smart Stealth Layer** — rotating browser fingerprints, randomized delays, bot detection bypass
+- 🔎 **Google Dorking Engine** — 50+ automated dork queries for exposed data, configs, and admin panels
+- 🧠 **AI Synthesis** — LLM-powered analysis generates a "Digital Footprint Summary" with risk assessment
+- 📊 **Confidence Scoring** — every finding rated 0-100% with color-coded confidence bars
 - 🌐 **Domain intelligence** — WHOIS, DNS, SSL, subdomains, tech stack, cloud buckets
-- 🕵️ **CDN/WAF bypass** — Find real IPs hidden behind Cloudflare, Akamai, AWS, and more
+- 🕵️ **CDN/WAF bypass** — Find real IPs behind Cloudflare, Akamai, AWS via 6 Shodan queries + 7 other techniques
 - 📧 **Email recon** — Validation, breach checks, pattern generation, harvesting
 - 👤 **Social profiling** — Username search across 30+ platforms in seconds
 - 🏢 **Business investigation** — Org info, staff, contacts, locations, records
 - 💀 **Leak detection** — Breaches, exposed files, archives, paste site monitoring
-- 🧠 **Smart analysis** — Automated risk scoring with actionable recommendations
-- 📊 **Beautiful reports** — Export to JSON or styled HTML
 
 ---
 
@@ -76,29 +78,154 @@ heavenlyeyes version
 
 ## 🚀 Quick Start
 
-Run a **full OSINT scan** on any domain with a single command:
+### Recursive Pivot (v2 Engine)
+
+Give it **any single input** — it figures out the rest:
 
 ```bash
-heavenlyeyes scan target.com
+# Username → finds profiles, emails, domains, and pivots deeper
+heavenlyeyes pivot johndoe
+
+# Email → validates, checks breaches, extracts username & domain, pivots
+heavenlyeyes pivot user@example.com --depth 3
+
+# Domain → DNS, WHOIS, tech, emails, pivots to discovered entities
+heavenlyeyes pivot example.com --html
+
+# IP → reverse DNS, geolocation, Shodan, pivots to hostnames
+heavenlyeyes pivot 93.184.216.34
 ```
 
-That's it. HeavenlyEyes will automatically:
+The engine **automatically branches** at each depth:
 
-> ✅ WHOIS & DNS lookup → ✅ SSL cert analysis → ✅ Subdomain enumeration → ✅ Tech stack detection → ✅ CDN/WAF bypass → ✅ Cloud bucket discovery → ✅ Email harvesting → ✅ Business investigation → ✅ Breach checking → ✅ Exposed file scanning → ✅ Risk assessment → ✅ Generate report
+```
+┌── username: johndoe
+├──── social_profile: GitHub → found email john@example.com
+│     ├── PIVOT email: john@example.com
+│     │   ├── domain: example.com
+│     │   ├── breach: Found in 2 breaches
+│     │   └── PIVOT domain: example.com
+│     │       ├── DNS records, WHOIS, tech stack
+│     │       └── emails harvested from pages
+│     └── PIVOT domain: johndoe.dev (from GitHub blog)
+├──── social_profile: Reddit, Twitter, LinkedIn, Steam...
+└──── Google Dorks: exposed docs, configs, admin panels
+```
 
-Want an HTML report too?
+### Classic Domain Scan
+
 ```bash
 heavenlyeyes scan target.com --html -o ./reports
 ```
 
-Use the **short alias** for faster typing:
+### Google Dorking
+
 ```bash
+heavenlyeyes dork example.com              # List 50+ dork queries
+heavenlyeyes dork example.com --execute    # Execute with stealth
+```
+
+### Short Alias
+
+```bash
+heyes pivot johndoe
 heyes scan target.com
+heyes dork target.com
 ```
 
 ---
 
 ## 📖 Modules
+
+<details open>
+<summary><h3>🧬 Recursive Pivot Engine</h3></summary>
+
+The core of v2. Takes **any input** and recursively discovers connected intelligence.
+
+```bash
+heyes pivot <target> [--depth 1-4] [--no-dorking] [--no-ai] [--html]
+```
+
+| Input Type | What It Does | Pivots To |
+|:---|:---|:---|
+| **Username** | Searches 30+ platforms, extracts profile data (name, email, bio, location) | Emails, domains, linked accounts |
+| **Email** | MX validation, breach checks, Gravatar lookup | Username (local part), domain, linked profiles |
+| **Domain** | DNS, WHOIS, tech detection, email harvesting | Emails found, registrant emails, MX hosts |
+| **IP** | Reverse DNS, geolocation, Shodan host lookup | Hostnames, associated domains |
+
+**Features:**
+- Confidence scoring (0-100%) on every finding with color-coded bars
+- Smart Stealth — rotating fingerprints, randomized delays, bot detection bypass
+- Google Dorking — 50+ automated queries for exposed data
+- AI Synthesis — LLM-powered "Digital Footprint Summary" (Anthropic/OpenAI)
+- Rule-based fallback analysis when no LLM key is set
+
+</details>
+
+<details>
+<summary><h3>🥷 Smart Stealth Layer</h3></summary>
+
+Built into all requests. No configuration needed — works automatically.
+
+- **17 browser fingerprints** — Chrome, Firefox, Safari, Edge, Brave, Opera, Vivaldi (desktop + mobile)
+- **Randomized headers** — Accept-Language, Sec-CH-UA, header ordering shuffled per request
+- **Jittered delays** — configurable min/max with randomized timing
+- **Bot detection bypass** — detects 429 rate limits, captcha pages, and 403 blocks
+- **Auto retry** — exponential backoff with fingerprint rotation on failure
+- **Proxy rotation** — optional proxy pool support
+- **Session persistence** — cookies maintained across requests
+
+```bash
+# Custom stealth timing
+heyes pivot target --stealth-min 1.0 --stealth-max 5.0
+```
+
+</details>
+
+<details>
+<summary><h3>🔎 Google Dorking Engine</h3></summary>
+
+50+ dork templates across 9 categories:
+
+```bash
+heyes dork example.com              # Generate queries (dry run)
+heyes dork example.com --execute    # Execute with stealth
+heyes dork johndoe -x -m 10        # Username dorks, max 10
+```
+
+| Category | What It Finds |
+|:---|:---|
+| `exposed_docs` | PDFs, DOCX, XLSX, CSV, TXT on the domain |
+| `config_files` | .env, .yaml, .conf, .log, .sql, .bak files |
+| `directory_listings` | Open "index of /" directories, .git exposure |
+| `admin_panels` | /admin, /login, /dashboard, /wp-admin |
+| `data_exposure` | Passwords in files, RSA keys, AWS keys, API endpoints |
+| `error_pages` | PHP errors, stack traces, SQL errors, debug info |
+| `emails` | Email addresses in documents and external pages |
+| `username_dorks` | Profile mentions on GitHub, LinkedIn, Pastebin, etc. |
+| `infrastructure` | Subdomains, staging environments, phpMyAdmin, Swagger |
+
+</details>
+
+<details>
+<summary><h3>🧠 AI Synthesis</h3></summary>
+
+Analyzes all findings and generates a **Digital Footprint Summary**.
+
+- Auto-detects `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`
+- Structured report: Identity, Digital Presence, Attack Surface, Correlations, Risk, Recommendations
+- Falls back to rule-based analysis when no LLM key is set
+
+```bash
+# With AI (set your key first)
+export ANTHROPIC_API_KEY="sk-ant-..."
+heyes pivot johndoe
+
+# Without AI (rule-based fallback, still useful)
+heyes pivot johndoe --no-ai
+```
+
+</details>
 
 <details>
 <summary><h3>🌐 Domain Intelligence</h3></summary>
@@ -257,9 +384,20 @@ export HEYES_SHODAN="your-key"
 export HEYES_HAVEIBEENPWNED="your-key"
 export HEYES_HUNTER_IO="your-key"
 export HEYES_VIRUSTOTAL="your-key"
+
+# For AI Synthesis (pick one)
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
 ```
 
-> 💡 **HeavenlyEyes works without API keys** — keys unlock premium sources like Shodan and HIBP for deeper results.
+> 💡 **HeavenlyEyes works without API keys** — keys unlock premium features:
+>
+> | Key | What It Unlocks |
+> |:---|:---|
+> | `HEYES_SHODAN` | Deep origin IP discovery, host verification, vuln scanning |
+> | `HEYES_HAVEIBEENPWNED` | Comprehensive breach database checks |
+> | `ANTHROPIC_API_KEY` | AI-powered Digital Footprint Summary (Claude) |
+> | `OPENAI_API_KEY` | AI-powered Digital Footprint Summary (GPT) |
 
 ---
 
@@ -268,29 +406,36 @@ export HEYES_VIRUSTOTAL="your-key"
 ```
 heavenly-eyes/
 ├── heavenlyeyes/
-│   ├── cli.py                   # CLI entrypoint (Typer)
+│   ├── cli.py                    # CLI entrypoint (Typer)
+│   ├── engine/                   # ★ v2.0 Engine Layer
+│   │   ├── pivot.py              # Recursive Pivot Engine
+│   │   ├── stealth.py            # Smart Stealth (rotating fingerprints)
+│   │   ├── confidence.py         # Confidence scoring system
+│   │   ├── dorking.py            # Google Dorking Engine (50+ dorks)
+│   │   ├── synthesis.py          # AI Synthesis (LLM integration)
+│   │   └── dashboard.py          # Rich terminal dashboard
 │   ├── core/
-│   │   ├── config.py            # Config & API key management
-│   │   ├── utils.py             # Shared utilities & Rich display
-│   │   └── reporter.py          # JSON & HTML report generation
+│   │   ├── config.py             # Config & API key management
+│   │   ├── utils.py              # Shared utilities & Rich display
+│   │   └── reporter.py           # JSON & HTML report generation
 │   └── modules/
 │       ├── domain/
-│       │   ├── records.py       # WHOIS, DNS, SSL
-│       │   ├── structure.py     # Subdomain enumeration
-│       │   ├── cloud_storage.py # S3, Azure, GCS bucket discovery
-│       │   ├── technologies.py  # Tech stack fingerprinting
-│       │   ├── third_parties.py # Third-party service detection
-│       │   └── origin_ip.py     # CDN/WAF bypass & origin IP
+│       │   ├── records.py        # WHOIS, DNS, SSL
+│       │   ├── structure.py      # Subdomain enumeration
+│       │   ├── cloud_storage.py  # S3, Azure, GCS bucket discovery
+│       │   ├── technologies.py   # Tech stack fingerprinting
+│       │   ├── third_parties.py  # Third-party service detection
+│       │   └── origin_ip.py      # CDN/WAF bypass & origin IP (Shodan)
 │       ├── email/
-│       │   └── recon.py         # Email validation, breaches, harvest
+│       │   └── recon.py          # Email validation, breaches, harvest
 │       ├── social/
-│       │   └── networks.py      # Username search (30+ platforms)
+│       │   └── networks.py       # Username search (30+ platforms)
 │       ├── business/
-│       │   └── organization.py  # Org, staff, contacts, records
+│       │   └── organization.py   # Org, staff, contacts, records
 │       ├── leaks/
-│       │   └── breaches.py      # Breaches, archives, exposed files
+│       │   └── breaches.py       # Breaches, archives, exposed files
 │       └── intelligence/
-│           └── analyzer.py      # Risk scoring & recommendations
+│           └── analyzer.py       # Risk scoring & recommendations
 ├── tests/
 ├── pyproject.toml
 └── requirements.txt
