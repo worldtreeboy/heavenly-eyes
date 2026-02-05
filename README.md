@@ -16,6 +16,8 @@ HeavenlyEyes is a comprehensive open-source intelligence (OSINT) command-line to
 - **Technology Detection** — Frameworks, CMS, CDNs, analytics, security headers
 - **Cloud Storage Discovery** — AWS S3, Azure Blob, GCS, DigitalOcean, Firebase
 - **Third-Party Services** — Detect 50+ third-party integrations
+- **Origin IP Discovery** — Find real IPs hidden behind CDN/WAF (Cloudflare, Akamai, AWS CloudFront, Fastly, Sucuri, Imperva, etc.)
+- **CDN/WAF Detection** — Identify which CDN or WAF is protecting a domain
 
 ### Email Reconnaissance
 - **Email Validation** — Format + MX record verification
@@ -53,7 +55,7 @@ HeavenlyEyes is a comprehensive open-source intelligence (OSINT) command-line to
 
 ```bash
 # Clone the repository
-git clone https://github.com/limxi/heavenly-eyes.git
+git clone https://github.com/worldtreeboy/heavenly-eyes.git
 cd heavenly-eyes
 
 # Install (recommended: use a virtual environment)
@@ -92,7 +94,20 @@ heavenlyeyes domain ssl example.com
 heavenlyeyes domain tech example.com
 heavenlyeyes domain cloud example.com
 heavenlyeyes domain third-parties example.com
+heavenlyeyes domain origin example.com         # Find real IP behind CDN/WAF
+heavenlyeyes domain cdn-detect example.com     # Detect CDN/WAF provider
 ```
+
+#### Origin IP Discovery Techniques
+| Method | Description | Confidence |
+|---|---|---|
+| MX Records | Mail servers often bypass CDN | HIGH |
+| SPF Records | `ip4:` directives leak the real server | HIGH |
+| Subdomain Bypass | 50+ subs like `mail.`, `ftp.`, `cpanel.` skip CDN | HIGH |
+| DNS History | Pre-CDN IPs via ViewDNS | MEDIUM |
+| CT Log Subdomains | crt.sh certificate transparency lookups | MEDIUM |
+| Header Leaks | `X-Real-IP`, `X-Originating-IP`, etc. | HIGH |
+| Favicon Hash | Hash favicon and search Shodan for matches | HIGH |
 
 ### Email Commands
 ```bash
@@ -185,7 +200,8 @@ heavenly-eyes/
 │       │   ├── structure.py    # Subdomain enumeration
 │       │   ├── cloud_storage.py
 │       │   ├── technologies.py
-│       │   └── third_parties.py
+│       │   ├── third_parties.py
+│       │   └── origin_ip.py    # CDN/WAF bypass, origin IP discovery
 │       ├── email/
 │       │   └── recon.py        # Validation, patterns, breaches
 │       ├── social/
