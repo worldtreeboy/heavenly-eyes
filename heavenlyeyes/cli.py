@@ -381,6 +381,95 @@ def cmd_leaks_full(
 
 
 # ════════════════════════════════════════════════════════════════════════
+#  PIVOT — RECURSIVE OSINT ENGINE (v2)
+# ════════════════════════════════════════════════════════════════════════
+
+@app.command()
+def pivot(
+    target: str = typer.Argument(help="Target — username, email, domain, or IP"),
+    depth: int = typer.Option(2, "--depth", "-d", help="Max recursive pivot depth (1-4)"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Output directory"),
+    no_dorking: bool = typer.Option(False, "--no-dorking", help="Skip Google Dorking"),
+    no_ai: bool = typer.Option(False, "--no-ai", help="Skip AI synthesis"),
+    html: bool = typer.Option(False, "--html", help="Also generate HTML report"),
+    stealth_min: float = typer.Option(0.5, "--stealth-min", help="Min delay between requests (sec)"),
+    stealth_max: float = typer.Option(3.0, "--stealth-max", help="Max delay between requests (sec)"),
+):
+    """[bold cyan]Recursive Pivot Engine[/bold cyan] — give it a username, email, domain, or IP and it branches out automatically to map the full digital footprint.
+
+    \b
+    Examples:
+      heavenlyeyes pivot johndoe
+      heavenlyeyes pivot user@example.com --depth 3
+      heavenlyeyes pivot example.com --no-dorking --html
+      heavenlyeyes pivot 1.2.3.4 -d 1 -o ./reports
+    """
+    ensure_config()
+    depth = max(1, min(4, depth))
+
+    from heavenlyeyes.engine.stealth import StealthConfig
+    from heavenlyeyes.engine.pivot import RecursivePivotEngine
+
+    stealth_cfg = StealthConfig(min_delay=stealth_min, max_delay=stealth_max)
+    engine = RecursivePivotEngine(
+        max_depth=depth,
+        enable_dorking=not no_dorking,
+        enable_ai=not no_ai,
+        stealth_config=stealth_cfg,
+    )
+    engine.run(target, output_dir=output, html=html)
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  DORKING
+# ════════════════════════════════════════════════════════════════════════
+
+@app.command()
+def dork(
+    target: str = typer.Argument(help="Target domain, username, or email"),
+    execute: bool = typer.Option(False, "--execute", "-x", help="Execute dorks (default: just list them)"),
+    max_dorks: int = typer.Option(20, "--max", "-m", help="Max dorks to execute"),
+):
+    """[bold cyan]Google Dorking Engine[/bold cyan] — generate or execute advanced search queries for exposed data.
+
+    \b
+    Examples:
+      heavenlyeyes dork example.com              # List dork queries
+      heavenlyeyes dork example.com --execute    # Execute with stealth
+      heavenlyeyes dork johndoe -x -m 10
+    """
+    ensure_config()
+    from heavenlyeyes.engine.pivot import classify_input
+    from heavenlyeyes.engine.dorking import DorkingEngine
+    from heavenlyeyes.engine.dashboard import print_banner, print_disclaimer
+
+    print_banner()
+    print_disclaimer()
+
+    input_type = classify_input(target)
+    engine = DorkingEngine()
+
+    if execute:
+        engine.execute_dorks(target, target_type=input_type, max_dorks=max_dorks)
+    else:
+        dorks = engine.get_dork_report(target, target_type=input_type)
+        from rich.table import Table
+        from rich import box
+        table = Table(
+            title=f"[bold]Google Dorks for {target}[/bold]",
+            box=box.ROUNDED, border_style="cyan",
+            header_style="bold white on #1a1a2e",
+        )
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Category", style="cyan", width=20)
+        table.add_column("Query", style="white")
+        for i, d in enumerate(dorks, 1):
+            table.add_row(str(i), d["category"], d["query"])
+        console.print(table)
+        console.print(f"\n[dim]{len(dorks)} dork(s) generated — use --execute to run them[/dim]")
+
+
+# ════════════════════════════════════════════════════════════════════════
 #  CONFIG COMMAND
 # ════════════════════════════════════════════════════════════════════════
 
@@ -393,6 +482,7 @@ def config():
     print_info("Edit this file to add API keys and customize settings.")
     print_info("You can also set API keys via environment variables:")
     print_info("  HEYES_SHODAN, HEYES_HAVEIBEENPWNED, HEYES_HUNTER_IO, HEYES_VIRUSTOTAL")
+    print_info("  ANTHROPIC_API_KEY, OPENAI_API_KEY (for AI synthesis)")
 
 
 # ════════════════════════════════════════════════════════════════════════
