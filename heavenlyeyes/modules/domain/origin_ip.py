@@ -206,14 +206,20 @@ def find_origin_ip(domain: str) -> dict:
     # Step 5: Check historical DNS via ViewDNS
     _check_dns_history(domain, results)
 
-    # Step 6: Check SSL certificate matches via Censys
+    # Step 6: Shodan deep search (SSL cert, hostname, title, favicon)
+    _check_shodan(domain, results)
+
+    # Step 7: Check SSL certificate matches via Censys
     _check_censys(domain, results)
 
-    # Step 7: Check HTTP header leaks
+    # Step 8: Check HTTP header leaks
     _check_header_leaks(domain, results)
 
-    # Step 8: Favicon hash search
+    # Step 9: Favicon hash search (fallback if no Shodan key)
     _check_favicon_hash(domain, results)
+
+    # Step 10: Verify candidates via Shodan host lookup
+    _verify_candidates_shodan(domain, results)
 
     # ── Summary ──
     _display_results(domain, cdn_info, results)
@@ -341,6 +347,220 @@ def _check_dns_history(domain: str, results: dict):
         print_info("DNS history lookup unavailable")
 
 
+def _check_shodan(domain: str, results: dict):
+    """Full Shodan search — SSL cert, hostname, HTTP title, favicon hash, Host header."""
+    shodan_key = get_api_key("shodan")
+    if not shodan_key:
+        print_info("No Shodan API key — skipping Shodan deep search")
+        print_info("Set HEYES_SHODAN env var or add to ~/.heavenlyeyes/config.yaml")
+        return
+
+    results["methods_used"].append("Shodan Deep Search")
+    print_info("Running Shodan deep search (SSL + hostname + title + favicon)...")
+
+    queries = {}
+
+    # 1. SSL certificate CN match — most reliable
+    queries["ssl_cn"] = {
+        "query": f"ssl.cert.subject.cn:{domain}",
+        "label": "Shodan SSL cert CN",
+        "confidence": "HIGH",
+    }
+
+    # 2. SSL certificate SAN match
+    queries["ssl_san"] = {
+        "query": f'ssl.cert.extensions.subjectAltName:"{domain}"',
+        "label": "Shodan SSL cert SAN",
+        "confidence": "HIGH",
+    }
+
+    # 3. Hostname match — servers that DNS resolves to this domain
+    queries["hostname"] = {
+        "query": f"hostname:{domain}",
+        "label": "Shodan hostname",
+        "confidence": "MEDIUM",
+    }
+
+    # 4. HTTP Host header — servers configured to respond to this domain
+    queries["http_host"] = {
+        "query": f'http.host:"{domain}"',
+        "label": "Shodan HTTP Host header",
+        "confidence": "HIGH",
+    }
+
+    # 5. Get page title for title-based search
+    page_title = _get_page_title(domain)
+    if page_title and len(page_title) > 5:
+        queries["http_title"] = {
+            "query": f'http.title:"{page_title}"',
+            "label": f"Shodan HTTP title match (\"{page_title[:40]}\")",
+            "confidence": "MEDIUM",
+        }
+
+    # 6. Favicon hash
+    fav_hash = _compute_favicon_hash(domain)
+    if fav_hash:
+        queries["favicon"] = {
+            "query": f"http.favicon.hash:{fav_hash}",
+            "label": "Shodan favicon hash",
+            "confidence": "HIGH",
+        }
+        results["favicon_hash"] = fav_hash
+        print_found("Favicon Hash (mmh3)", str(fav_hash))
+
+    # Run all queries
+    total_found = 0
+    for key, info in queries.items():
+        ips = _shodan_search(shodan_key, info["query"])
+        for ip, meta in ips.items():
+            if not _is_cdn_ip(ip) and ip not in results["candidates"]:
+                results["candidates"][ip] = {
+                    "source": info["label"],
+                    "confidence": info["confidence"],
+                    "shodan_ports": meta.get("ports", []),
+                    "shodan_org": meta.get("org", ""),
+                }
+                ports_str = ", ".join(str(p) for p in meta.get("ports", [])[:5])
+                org = meta.get("org", "")
+                detail = f"{ip}"
+                if org:
+                    detail += f" [{org}]"
+                if ports_str:
+                    detail += f" (ports: {ports_str})"
+                print_found(info["label"], detail)
+                total_found += 1
+
+    if total_found:
+        print_info(f"Shodan found {total_found} origin IP candidate(s)")
+    else:
+        print_info("Shodan returned no non-CDN results")
+
+
+def _shodan_search(api_key: str, query: str, max_results: int = 50) -> dict:
+    """Execute a Shodan search query and return {ip: metadata} dict."""
+    results = {}
+    try:
+        resp = make_request(
+            "https://api.shodan.io/shodan/host/search",
+            params={"key": api_key, "query": query, "minify": "true"},
+        )
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            for match in data.get("matches", [])[:max_results]:
+                ip = match.get("ip_str", "")
+                if ip:
+                    if ip not in results:
+                        results[ip] = {
+                            "ports": [],
+                            "org": match.get("org", ""),
+                            "isp": match.get("isp", ""),
+                            "os": match.get("os", ""),
+                        }
+                    port = match.get("port")
+                    if port and port not in results[ip]["ports"]:
+                        results[ip]["ports"].append(port)
+        elif resp and resp.status_code == 401:
+            print_error("Shodan API key is invalid")
+        elif resp and resp.status_code == 429:
+            print_warning("Shodan rate limit hit — try again later")
+    except Exception:
+        pass
+    return results
+
+
+def _get_page_title(domain: str) -> str | None:
+    """Get the HTML page title of a domain."""
+    for proto in ("https", "http"):
+        resp = make_request(f"{proto}://{domain}")
+        if resp and resp.status_code == 200:
+            match = re.search(r"<title[^>]*>(.*?)</title>", resp.text, re.IGNORECASE | re.DOTALL)
+            if match:
+                title = match.group(1).strip()
+                # Clean up and truncate for Shodan query
+                title = re.sub(r"\s+", " ", title)
+                return title[:80] if len(title) > 80 else title
+    return None
+
+
+def _compute_favicon_hash(domain: str) -> int | None:
+    """Compute Shodan-compatible mmh3 favicon hash."""
+    for proto in ("https", "http"):
+        resp = make_request(f"{proto}://{domain}/favicon.ico")
+        if resp and resp.status_code == 200 and len(resp.content) > 0:
+            try:
+                import mmh3
+                import base64
+                encoded = base64.encodebytes(resp.content)
+                return mmh3.hash(encoded)
+            except ImportError:
+                # mmh3 not installed — try codecs approach
+                try:
+                    import base64
+                    import struct as _struct
+                    encoded = base64.encodebytes(resp.content)
+                    return _mmh3_hash(encoded)
+                except Exception:
+                    return None
+    return None
+
+
+def _mmh3_hash(data: bytes, seed: int = 0) -> int:
+    """Pure Python implementation of MurmurHash3 (32-bit) for Shodan favicon matching."""
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+
+    length = len(data)
+    nblocks = length // 4
+    h1 = seed & 0xFFFFFFFF
+
+    c1 = 0xCC9E2D51
+    c2 = 0x1B873593
+
+    for i in range(nblocks):
+        idx = i * 4
+        k1 = (
+            data[idx]
+            | (data[idx + 1] << 8)
+            | (data[idx + 2] << 16)
+            | (data[idx + 3] << 24)
+        )
+        k1 = (k1 * c1) & 0xFFFFFFFF
+        k1 = ((k1 << 15) | (k1 >> 17)) & 0xFFFFFFFF
+        k1 = (k1 * c2) & 0xFFFFFFFF
+
+        h1 ^= k1
+        h1 = ((h1 << 13) | (h1 >> 19)) & 0xFFFFFFFF
+        h1 = (h1 * 5 + 0xE6546B64) & 0xFFFFFFFF
+
+    tail_idx = nblocks * 4
+    k1 = 0
+    tail_size = length & 3
+
+    if tail_size >= 3:
+        k1 ^= data[tail_idx + 2] << 16
+    if tail_size >= 2:
+        k1 ^= data[tail_idx + 1] << 8
+    if tail_size >= 1:
+        k1 ^= data[tail_idx]
+        k1 = (k1 * c1) & 0xFFFFFFFF
+        k1 = ((k1 << 15) | (k1 >> 17)) & 0xFFFFFFFF
+        k1 = (k1 * c2) & 0xFFFFFFFF
+        h1 ^= k1
+
+    h1 ^= length
+    h1 ^= (h1 >> 16)
+    h1 = (h1 * 0x85EBCA6B) & 0xFFFFFFFF
+    h1 ^= (h1 >> 13)
+    h1 = (h1 * 0xC2B2AE35) & 0xFFFFFFFF
+    h1 ^= (h1 >> 16)
+
+    # Convert to signed 32-bit int (Shodan uses signed)
+    if h1 >= 0x80000000:
+        h1 -= 0x100000000
+
+    return h1
+
+
 def _check_censys(domain: str, results: dict):
     """Search Censys for SSL certificates matching the domain."""
     results["methods_used"].append("SSL Certificate Search (Censys)")
@@ -440,52 +660,74 @@ def _check_header_leaks(domain: str, results: dict):
 
 
 def _check_favicon_hash(domain: str, results: dict):
-    """Calculate favicon hash for Shodan search."""
-    results["methods_used"].append("Favicon Hash")
+    """Fallback favicon hash when Shodan key is unavailable."""
+    # Skip if Shodan already handled this
+    if "Shodan Deep Search" in results.get("methods_used", []):
+        return
 
-    for proto in ("https", "http"):
-        resp = make_request(f"{proto}://{domain}/favicon.ico")
-        if resp and resp.status_code == 200 and len(resp.content) > 0:
-            import base64
-            try:
-                import mmh3
-                favicon_b64 = base64.encodebytes(resp.content)
-                fav_hash = mmh3.hash(favicon_b64)
-                results["favicon_hash"] = fav_hash
-                print_found("Favicon Hash", str(fav_hash))
-                print_info(f"Search Shodan: http.favicon.hash:{fav_hash}")
+    results["methods_used"].append("Favicon Hash (manual)")
 
-                # If Shodan API key available, search automatically
-                shodan_key = get_api_key("shodan")
-                if shodan_key:
-                    _search_shodan_favicon(fav_hash, shodan_key, domain, results)
-                else:
-                    print_info("Add a Shodan API key to auto-search for origin by favicon hash")
-            except ImportError:
-                # Fallback: use standard hashlib
-                fav_hash = hashlib.md5(resp.content).hexdigest()
-                results["favicon_md5"] = fav_hash
-                print_found("Favicon MD5", fav_hash)
-                print_info("Install 'mmh3' for Shodan-compatible favicon hash")
-            break
+    fav_hash = _compute_favicon_hash(domain)
+    if fav_hash:
+        results["favicon_hash"] = fav_hash
+        print_found("Favicon Hash", str(fav_hash))
+        print_info(f"Manual Shodan search: https://www.shodan.io/search?query=http.favicon.hash%3A{fav_hash}")
+        print_info("Add a Shodan API key to auto-search this hash")
+    else:
+        # MD5 fallback
+        for proto in ("https", "http"):
+            resp = make_request(f"{proto}://{domain}/favicon.ico")
+            if resp and resp.status_code == 200 and len(resp.content) > 0:
+                fav_md5 = hashlib.md5(resp.content).hexdigest()
+                results["favicon_md5"] = fav_md5
+                print_found("Favicon MD5", fav_md5)
+                break
 
 
-def _search_shodan_favicon(fav_hash: int, api_key: str, domain: str, results: dict):
-    """Search Shodan for servers with matching favicon hash."""
-    resp = make_request(
-        f"https://api.shodan.io/shodan/host/search?key={api_key}&query=http.favicon.hash:{fav_hash}",
-    )
-    if resp and resp.status_code == 200:
+def _verify_candidates_shodan(domain: str, results: dict):
+    """Verify candidate IPs by checking if they serve the domain via Shodan host lookup."""
+    shodan_key = get_api_key("shodan")
+    if not shodan_key:
+        return
+
+    candidates = list(results.get("candidates", {}).keys())
+    if not candidates:
+        return
+
+    print_info(f"Verifying {len(candidates)} candidate(s) via Shodan host lookup...")
+
+    for ip in candidates[:10]:  # Limit to avoid rate limits
         try:
-            data = resp.json()
-            for match in data.get("matches", []):
-                ip = match.get("ip_str")
-                if ip and not _is_cdn_ip(ip):
-                    results["candidates"][ip] = {
-                        "source": f"Shodan favicon hash match",
-                        "confidence": "HIGH",
-                    }
-                    print_found("Shodan Match", f"{ip} (favicon hash)")
+            resp = make_request(
+                f"https://api.shodan.io/shodan/host/{ip}",
+                params={"key": shodan_key, "minify": "true"},
+            )
+            if resp and resp.status_code == 200:
+                data = resp.json()
+                hostnames = data.get("hostnames", [])
+                org = data.get("org", "")
+                ports = data.get("ports", [])
+
+                # Check if this IP is associated with the domain
+                domain_match = any(domain in h for h in hostnames)
+                if domain_match:
+                    # Upgrade confidence if domain appears in hostnames
+                    if ip in results["candidates"]:
+                        results["candidates"][ip]["confidence"] = "HIGH"
+                        results["candidates"][ip]["verified"] = True
+                        results["candidates"][ip]["shodan_hostnames"] = hostnames
+                        results["candidates"][ip]["shodan_org"] = org
+                        results["candidates"][ip]["shodan_ports"] = ports
+                        print_found(
+                            "Verified",
+                            f"{ip} — Shodan confirms domain association "
+                            f"[{org}] ports: {', '.join(str(p) for p in ports[:8])}",
+                        )
+                else:
+                    # Still useful info
+                    if ip in results["candidates"]:
+                        results["candidates"][ip]["shodan_org"] = org
+                        results["candidates"][ip]["shodan_ports"] = ports
         except Exception:
             pass
 
@@ -503,28 +745,51 @@ def _display_results(domain: str, cdn_info: dict, results: dict):
     if results["candidates"]:
         table = create_table(
             f"Origin IP Candidates for {domain}",
-            [("IP Address", "green"), ("Source", "white"), ("Confidence", "yellow")],
+            [
+                ("IP Address", "green"),
+                ("Source", "white"),
+                ("Org / ISP", "dim"),
+                ("Ports", "cyan"),
+                ("Confidence", "yellow"),
+            ],
         )
 
-        # Sort by confidence
+        # Sort by confidence, then verified first
         confidence_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
         sorted_candidates = sorted(
             results["candidates"].items(),
-            key=lambda x: confidence_order.get(x[1]["confidence"], 3),
+            key=lambda x: (
+                0 if x[1].get("verified") else 1,
+                confidence_order.get(x[1]["confidence"], 3),
+            ),
         )
 
         for ip, meta in sorted_candidates:
             conf = meta["confidence"]
             color = {"HIGH": "green", "MEDIUM": "yellow", "LOW": "red"}.get(conf, "white")
-            table.add_row(ip, meta["source"], f"[{color}]{conf}[/{color}]")
+            verified = " [bold green]✓[/bold green]" if meta.get("verified") else ""
+            org = meta.get("shodan_org", "")
+            ports = ", ".join(str(p) for p in meta.get("shodan_ports", [])[:6])
+            table.add_row(
+                f"{ip}{verified}",
+                meta["source"],
+                org,
+                ports,
+                f"[{color}]{conf}[/{color}]",
+            )
 
         console.print(table)
 
+        # Show verified IPs prominently
+        verified = [ip for ip, m in results["candidates"].items() if m.get("verified")]
         high_conf = [ip for ip, m in results["candidates"].items() if m["confidence"] == "HIGH"]
-        if high_conf:
+
+        if verified:
+            console.print(f"\n[bold green]✓ Shodan-verified origin IP(s):[/bold green] {', '.join(verified)}")
+        elif high_conf:
             console.print(f"\n[bold green]Most likely origin IP(s):[/bold green] {', '.join(high_conf)}")
         else:
             print_warning("No high-confidence candidates — results need manual verification")
     else:
         print_warning("No origin IP candidates found — CDN may be well-configured")
-        print_info("Try adding Shodan/Censys API keys for deeper analysis")
+        print_info("Add a Shodan API key (HEYES_SHODAN) for much deeper results")
