@@ -228,28 +228,91 @@ def find_origin_ip(domain: str) -> dict:
 
 
 def _check_mx_records(domain: str, results: dict):
-    """Check MX records — mail servers often reveal origin IP."""
-    results["methods_used"].append("MX Records")
+    """Check MX records — mail servers often reveal origin IP.
+
+    Enhancement: Also checks if the MX IP responds to HTTP (same-server indicator)
+    and performs subnet correlation with other candidates.
+    """
+    results["methods_used"].append("MX / SMTP Leak Analysis")
+    mx_ips = []
     try:
         mx_records = dns.resolver.resolve(domain, "MX")
         for mx in mx_records:
             mx_host = str(mx.exchange).rstrip(".")
-            # If MX points to the same domain, resolve it
-            if domain in mx_host:
-                ip = resolve_host(mx_host)
-                if ip and not _is_cdn_ip(ip):
+            ip = resolve_host(mx_host)
+            if not ip:
+                continue
+
+            mx_ips.append(ip)
+            is_cdn = _is_cdn_ip(ip)
+
+            if domain in mx_host and not is_cdn:
+                results["candidates"][ip] = {
+                    "source": f"MX record ({mx_host})",
+                    "confidence": "HIGH",
+                }
+                print_found("MX Origin", f"{ip} via {mx_host}")
+            elif not is_cdn:
+                print_info(f"MX server: {mx_host} ({ip})")
+
+            # ── HTTP probe on MX IP — if it serves web content, likely the origin ──
+            if not is_cdn:
+                http_match = _http_probe_ip(ip, domain)
+                if http_match:
                     results["candidates"][ip] = {
-                        "source": f"MX record ({mx_host})",
+                        "source": f"MX IP responds to HTTP ({mx_host})",
                         "confidence": "HIGH",
                     }
-                    print_found("MX Origin", f"{ip} via {mx_host}")
-            else:
-                # External mail — still worth noting
-                ip = resolve_host(mx_host)
-                if ip:
-                    print_info(f"MX points to external: {mx_host} ({ip})")
+                    print_found(
+                        "[bold green]MX+HTTP MATCH[/bold green]",
+                        f"{ip} — mail server also serves HTTP for {domain}",
+                    )
+
+        # ── Subnet correlation — check if MX IP is near other candidates ──
+        if mx_ips:
+            _subnet_correlation(mx_ips, domain, results)
+
     except Exception:
         pass
+
+
+def _http_probe_ip(ip: str, domain: str) -> bool:
+    """Probe an IP to see if it serves HTTP content for the domain."""
+    for proto in ("https", "http"):
+        try:
+            resp = requests.get(
+                f"{proto}://{ip}",
+                headers={"Host": domain, "User-Agent": "HeavenlyEyes/2.0"},
+                timeout=5,
+                verify=False,
+                allow_redirects=False,
+            )
+            if resp.status_code in (200, 301, 302, 403):
+                # Check if it actually knows about the domain
+                body = resp.text[:2000].lower()
+                if domain.lower() in body or resp.status_code in (200, 301, 302):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def _subnet_correlation(mx_ips: list[str], domain: str, results: dict):
+    """Check if MX IPs share a /24 subnet with any candidate — strong origin signal."""
+    existing = list(results.get("candidates", {}).keys())
+    for mx_ip in mx_ips:
+        mx_prefix = ".".join(mx_ip.split(".")[:3])
+        for candidate_ip in existing:
+            cand_prefix = ".".join(candidate_ip.split(".")[:3])
+            if mx_prefix == cand_prefix and mx_ip != candidate_ip:
+                print_found(
+                    "[bold green]SUBNET MATCH[/bold green]",
+                    f"MX {mx_ip} shares /24 with candidate {candidate_ip} — strong origin signal",
+                )
+                # Upgrade candidate confidence
+                if candidate_ip in results["candidates"]:
+                    results["candidates"][candidate_ip]["confidence"] = "HIGH"
+                    results["candidates"][candidate_ip]["subnet_match"] = mx_ip
 
 
 def _check_spf_records(domain: str, results: dict):
@@ -287,64 +350,162 @@ def _check_spf_records(domain: str, results: dict):
 
 
 def _check_bypass_subdomains(domain: str, cdn_info: dict, results: dict):
-    """Check subdomains that typically bypass CDN."""
-    results["methods_used"].append("Subdomain Bypass")
-    print_info(f"Checking {len(BYPASS_SUBDOMAINS)} subdomains for CDN bypass...")
+    """Check subdomains that typically bypass CDN.
+
+    Enhancement: Multi-threaded + HTTP-probes discovered IPs to verify they serve
+    the same content as the main domain.
+    """
+    import concurrent.futures
+
+    results["methods_used"].append("Subdomain Bypass + HTTP Verification")
+    print_info(f"Checking {len(BYPASS_SUBDOMAINS)} subdomains for CDN bypass (threaded)...")
 
     resolver = dns.resolver.Resolver()
     resolver.timeout = 3
     resolver.lifetime = 3
     found_count = 0
 
-    for sub in BYPASS_SUBDOMAINS:
+    def check_sub(sub):
         fqdn = f"{sub}.{domain}"
         try:
             answers = resolver.resolve(fqdn, "A")
             for rdata in answers:
                 ip = str(rdata)
                 if ip != cdn_info.get("current_ip") and not _is_cdn_ip(ip):
-                    confidence = "HIGH" if sub in ("mail", "ftp", "direct", "origin", "cpanel") else "MEDIUM"
-                    if ip not in results["candidates"]:
-                        results["candidates"][ip] = {
-                            "source": f"Subdomain bypass ({fqdn})",
-                            "confidence": confidence,
-                        }
-                        print_found("Bypass IP", f"{ip} via {fqdn}")
-                        found_count += 1
+                    return (sub, fqdn, ip)
         except Exception:
             pass
+        return None
+
+    # Threaded subdomain resolution
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as pool:
+        futures = {pool.submit(check_sub, sub): sub for sub in BYPASS_SUBDOMAINS}
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                sub, fqdn, ip = result
+                high_value = sub in (
+                    "mail", "ftp", "direct", "origin", "cpanel", "webmail",
+                    "smtp", "imap", "pop", "pop3", "owa", "exchange",
+                )
+                confidence = "HIGH" if high_value else "MEDIUM"
+
+                if ip not in results["candidates"]:
+                    results["candidates"][ip] = {
+                        "source": f"Subdomain bypass ({fqdn})",
+                        "confidence": confidence,
+                    }
+                    print_found("Bypass IP", f"{ip} via {fqdn}")
+                    found_count += 1
+
+                    # HTTP-probe: does this IP serve the main domain?
+                    if _http_probe_ip(ip, domain):
+                        results["candidates"][ip]["confidence"] = "HIGH"
+                        results["candidates"][ip]["http_verified"] = True
+                        print_found(
+                            "[bold green]HTTP VERIFIED[/bold green]",
+                            f"{ip} ({fqdn}) serves HTTP content for {domain}",
+                        )
 
     if found_count == 0:
         print_info("No unproxied subdomains found")
+    else:
+        print_info(f"Found {found_count} unproxied subdomain(s)")
 
 
 def _check_dns_history(domain: str, results: dict):
-    """Check historical DNS records for pre-CDN IPs."""
-    results["methods_used"].append("DNS History")
+    """Check historical DNS records for pre-CDN IPs.
 
-    # ViewDNS.info IP History
+    Uses SecurityTrails API (if key available) + ViewDNS.info scraping.
+    Shows a formatted table of the last known IPs with dates.
+    """
+    results["methods_used"].append("Historical DNS Snapshots")
+
+    history_entries = []  # list of {ip, date, source}
+
+    # ── SecurityTrails API (best source) ──
+    st_key = get_api_key("securitytrails")
+    if st_key:
+        print_info("Querying SecurityTrails for DNS history...")
+        resp = make_request(
+            f"https://api.securitytrails.com/v1/history/{domain}/dns/a",
+            headers={"apikey": st_key, "Accept": "application/json"},
+        )
+        if resp and resp.status_code == 200:
+            try:
+                data = resp.json()
+                for record in data.get("records", []):
+                    for val in record.get("values", []):
+                        ip = val.get("ip", "")
+                        if ip:
+                            history_entries.append({
+                                "ip": ip,
+                                "date": record.get("last_seen", "?"),
+                                "first_seen": record.get("first_seen", "?"),
+                                "source": "SecurityTrails",
+                                "org": record.get("organizations", [""])[0] if record.get("organizations") else "",
+                            })
+            except Exception:
+                pass
+    else:
+        print_info("No SecurityTrails key — add HEYES_SECURITYTRAILS for premium DNS history")
+
+    # ── ViewDNS.info scraping (free fallback) ──
     resp = make_request(f"https://viewdns.info/iphistory/?domain={domain}")
     if resp and resp.status_code == 200:
-        # Parse the HTML table for IPs
-        ip_matches = re.findall(
-            r"<td>(\d+\.\d+\.\d+\.\d+)</td>",
+        # Parse table rows: IP | Location | Owner | Last seen
+        rows = re.findall(
+            r"<tr><td>(\d+\.\d+\.\d+\.\d+)</td><td>(.*?)</td><td>(.*?)</td><td>(.*?)</td></tr>",
             resp.text,
         )
-        seen = set()
-        for ip in ip_matches:
-            if ip not in seen and not _is_cdn_ip(ip):
-                seen.add(ip)
-                if ip not in results["candidates"]:
-                    results["candidates"][ip] = {
-                        "source": "DNS history (ViewDNS)",
-                        "confidence": "MEDIUM",
-                    }
-                    print_found("Historical IP", f"{ip} (pre-CDN)")
+        if rows:
+            for ip, location, owner, date in rows:
+                if not any(e["ip"] == ip and e["source"] == "ViewDNS" for e in history_entries):
+                    history_entries.append({
+                        "ip": ip,
+                        "date": date.strip(),
+                        "source": "ViewDNS",
+                        "org": owner.strip(),
+                    })
+        else:
+            # Simpler fallback — just IPs
+            ip_matches = re.findall(r"<td>(\d+\.\d+\.\d+\.\d+)</td>", resp.text)
+            for ip in ip_matches:
+                if not any(e["ip"] == ip for e in history_entries):
+                    history_entries.append({"ip": ip, "date": "?", "source": "ViewDNS", "org": ""})
 
-        if not seen:
-            print_info("No historical IPs found via ViewDNS")
+    # ── Display and process ──
+    if history_entries:
+        table = create_table(
+            f"Historical DNS for {domain}",
+            [("IP Address", "white"), ("Last Seen", "dim"), ("Org/Owner", "dim"), ("Source", "dim"), ("CDN?", "yellow")],
+        )
+        seen_ips = set()
+        for entry in history_entries:
+            ip = entry["ip"]
+            if ip in seen_ips:
+                continue
+            seen_ips.add(ip)
+
+            cdn = _is_cdn_ip(ip)
+            cdn_label = f"[yellow]{cdn}[/yellow]" if cdn else "[green]No[/green]"
+            table.add_row(ip, entry.get("date", "?"), entry.get("org", ""), entry["source"], cdn_label)
+
+            if not cdn and ip not in results["candidates"]:
+                results["candidates"][ip] = {
+                    "source": f"DNS history ({entry['source']}, last: {entry.get('date', '?')})",
+                    "confidence": "MEDIUM",
+                }
+
+        console.print(table)
+
+        non_cdn = [e["ip"] for e in history_entries if not _is_cdn_ip(e["ip"])]
+        if non_cdn:
+            unique = list(dict.fromkeys(non_cdn))
+            print_found("Pre-CDN IPs", ", ".join(unique[:5]))
+            print_info(f"{len(unique)} historical non-CDN IP(s) found — these are likely the origin")
     else:
-        print_info("DNS history lookup unavailable")
+        print_info("No historical DNS records found")
 
 
 def _check_shodan(domain: str, results: dict):
@@ -408,32 +569,83 @@ def _check_shodan(domain: str, results: dict):
         results["favicon_hash"] = fav_hash
         print_found("Favicon Hash (mmh3)", str(fav_hash))
 
-    # Run all queries
+    # Run all queries and collect ALL matches for the table
+    all_shodan_hits = {}  # ip -> {meta + which queries matched}
     total_found = 0
+
     for key, info in queries.items():
         ips = _shodan_search(shodan_key, info["query"])
         for ip, meta in ips.items():
-            if not _is_cdn_ip(ip) and ip not in results["candidates"]:
+            is_cdn = _is_cdn_ip(ip)
+            if ip not in all_shodan_hits:
+                all_shodan_hits[ip] = {
+                    "ports": meta.get("ports", []),
+                    "org": meta.get("org", ""),
+                    "isp": meta.get("isp", ""),
+                    "is_cdn": is_cdn,
+                    "matched_queries": [],
+                }
+            all_shodan_hits[ip]["matched_queries"].append(info["label"])
+
+            if not is_cdn and ip not in results["candidates"]:
+                # More queries matched = higher confidence
+                confidence = info["confidence"]
                 results["candidates"][ip] = {
                     "source": info["label"],
-                    "confidence": info["confidence"],
+                    "confidence": confidence,
                     "shodan_ports": meta.get("ports", []),
                     "shodan_org": meta.get("org", ""),
                 }
-                ports_str = ", ".join(str(p) for p in meta.get("ports", [])[:5])
-                org = meta.get("org", "")
-                detail = f"{ip}"
-                if org:
-                    detail += f" [{org}]"
-                if ports_str:
-                    detail += f" (ports: {ports_str})"
-                print_found(info["label"], detail)
                 total_found += 1
 
-    if total_found:
-        print_info(f"Shodan found {total_found} origin IP candidate(s)")
+    # ── Display Shodan results as a rich table ──
+    if all_shodan_hits:
+        table = create_table(
+            f"Shodan Discovery — {len(all_shodan_hits)} server(s) found globally",
+            [
+                ("IP Address", "white"),
+                ("Org / ISP", "dim"),
+                ("Ports", "cyan"),
+                ("Matched Queries", "green"),
+                ("CDN?", "yellow"),
+                ("Verdict", "bold"),
+            ],
+        )
+        for ip, meta in sorted(all_shodan_hits.items(), key=lambda x: len(x[1]["matched_queries"]), reverse=True):
+            ports = ", ".join(str(p) for p in meta["ports"][:6])
+            queries_matched = ", ".join(meta["matched_queries"][:3])
+            cdn_label = f"[yellow]{meta['is_cdn']}[/yellow]" if meta["is_cdn"] else "[green]No[/green]"
+
+            match_count = len(meta["matched_queries"])
+            if meta["is_cdn"]:
+                verdict = "[dim]CDN node[/dim]"
+            elif match_count >= 3:
+                verdict = "[bold green]★ LIKELY ORIGIN[/bold green]"
+            elif match_count >= 2:
+                verdict = "[green]Strong match[/green]"
+            else:
+                verdict = "[yellow]Possible[/yellow]"
+
+            table.add_row(ip, meta.get("org", ""), ports, queries_matched, cdn_label, verdict)
+
+            # Upgrade candidates that matched multiple queries
+            if not meta["is_cdn"] and match_count >= 2 and ip in results["candidates"]:
+                results["candidates"][ip]["confidence"] = "HIGH"
+                results["candidates"][ip]["shodan_multi_match"] = match_count
+
+        console.print(table)
+
+        non_cdn = [ip for ip, m in all_shodan_hits.items() if not m["is_cdn"]]
+        if non_cdn:
+            best = max(non_cdn, key=lambda ip: len(all_shodan_hits[ip]["matched_queries"]))
+            match_count = len(all_shodan_hits[best]["matched_queries"])
+            console.print(
+                f"\n  [bold green]★ Best Shodan match:[/bold green] {best} "
+                f"(matched {match_count} queries, org: {all_shodan_hits[best].get('org', '?')})"
+            )
+        print_info(f"Shodan found {total_found} non-CDN candidate(s) across {len(all_shodan_hits)} total server(s)")
     else:
-        print_info("Shodan returned no non-CDN results")
+        print_info("Shodan returned no results")
 
 
 def _shodan_search(api_key: str, query: str, max_results: int = 50) -> dict:

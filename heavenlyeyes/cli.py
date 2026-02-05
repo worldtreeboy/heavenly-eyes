@@ -2,10 +2,12 @@
 
 import typer
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 from heavenlyeyes.core.utils import banner, console, print_section, print_info, print_error
-from heavenlyeyes.core.config import ensure_config
+from heavenlyeyes.core.config import ensure_config, auto_check_keys
 from heavenlyeyes.core.reporter import ReportCollector
 
 app = typer.Typer(
@@ -40,11 +42,15 @@ def scan(
     skip_subdomains: bool = typer.Option(False, "--skip-subdomains", help="Skip subdomain enumeration"),
     skip_cloud: bool = typer.Option(False, "--skip-cloud", help="Skip cloud storage check"),
     html: bool = typer.Option(False, "--html", help="Also generate HTML report"),
+    parallel: bool = typer.Option(True, "--parallel/--sequential", help="Run modules in parallel"),
+    workers: int = typer.Option(6, "--workers", "-w", help="Max parallel workers (2-12)"),
 ):
     """Run a full OSINT scan on a target domain."""
     banner()
     ensure_config()
+    auto_check_keys(console)
     report = ReportCollector(target)
+    workers = max(2, min(12, workers))
 
     from heavenlyeyes.modules.domain.records import whois_lookup, dns_lookup, ssl_info
     from heavenlyeyes.modules.domain.structure import enumerate_subdomains
@@ -62,40 +68,77 @@ def scan(
     )
     from heavenlyeyes.modules.intelligence.analyzer import analyze_findings
 
-    # Domain
-    report.add_section("domain_records", whois_lookup(target))
-    report.add_section("dns_records", dns_lookup(target))
-    report.add_section("ssl_info", ssl_info(target))
+    # ── Build task list ──
+    tasks = [
+        ("domain_records", "WHOIS Lookup", lambda: whois_lookup(target)),
+        ("dns_records", "DNS Records", lambda: dns_lookup(target)),
+        ("ssl_info", "SSL Certificate", lambda: ssl_info(target)),
+        ("technologies", "Tech Detection", lambda: detect_technologies(target)),
+        ("third_parties", "Third Parties", lambda: detect_third_parties(target)),
+        ("origin_ip", "Origin IP Discovery", lambda: find_origin_ip(target)),
+        ("emails", "Email Harvesting", lambda: {"harvested": harvest_emails(target)}),
+        ("organization", "Organization Intel", lambda: investigate_organization(target)),
+        ("locations", "Locations", lambda: discover_locations(target)),
+        ("staff", "Staff Discovery", lambda: discover_staff(target)),
+        ("contacts", "Contacts", lambda: discover_contacts(target)),
+        ("business_records", "Business Records", lambda: investigate_records(target)),
+        ("services", "Services", lambda: discover_services(target)),
+        ("breaches", "Breach Check", lambda: check_domain_breaches(target)),
+        ("archives", "Web Archives", lambda: check_archives(target)),
+        ("leak_indicators", "Leak Indicators", lambda: check_leak_indicators(target)),
+    ]
 
     if not skip_subdomains:
-        report.add_section("subdomains", enumerate_subdomains(target))
-
-    report.add_section("technologies", detect_technologies(target))
-    report.add_section("third_parties", detect_third_parties(target))
+        tasks.insert(3, ("subdomains", "Subdomain Enum", lambda: enumerate_subdomains(target)))
 
     if not skip_cloud:
-        report.add_section("cloud_storage", check_cloud_storage(target))
+        tasks.insert(4, ("cloud_storage", "Cloud Storage", lambda: check_cloud_storage(target)))
 
-    # Origin IP (CDN/WAF bypass)
-    report.add_section("origin_ip", find_origin_ip(target))
+    # ── Execute ──
+    if parallel:
+        console.print(f"\n[bold cyan]Parallel scan[/bold cyan] — {len(tasks)} modules, {workers} workers\n")
 
-    # Email
-    report.add_section("emails", {"harvested": harvest_emails(target)})
+        with Progress(
+            SpinnerColumn(style="cyan"),
+            TextColumn("[bold]{task.description}"),
+            BarColumn(bar_width=20, complete_style="cyan"),
+            TextColumn("[dim]{task.fields[status]}[/dim]"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            progress_tasks = {}
+            for section_key, label, _ in tasks:
+                progress_tasks[section_key] = progress.add_task(label, total=1, status="pending")
 
-    # Business
-    report.add_section("organization", investigate_organization(target))
-    report.add_section("locations", discover_locations(target))
-    report.add_section("staff", discover_staff(target))
-    report.add_section("contacts", discover_contacts(target))
-    report.add_section("business_records", investigate_records(target))
-    report.add_section("services", discover_services(target))
+            def _run_module(section_key, label, fn):
+                progress.update(progress_tasks[section_key], status="running...")
+                try:
+                    result = fn()
+                    progress.update(progress_tasks[section_key], advance=1, status="[green]done[/green]")
+                    return section_key, result
+                except Exception as e:
+                    progress.update(progress_tasks[section_key], advance=1, status=f"[red]error[/red]")
+                    return section_key, {"error": str(e)}
 
-    # Leaks
-    report.add_section("breaches", check_domain_breaches(target))
-    report.add_section("archives", check_archives(target))
-    report.add_section("leak_indicators", check_leak_indicators(target))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(_run_module, key, label, fn): key
+                    for key, label, fn in tasks
+                }
+                for future in as_completed(futures):
+                    section_key, result = future.result()
+                    report.add_section(section_key, result)
+    else:
+        for section_key, label, fn in tasks:
+            print_section(label)
+            try:
+                report.add_section(section_key, fn())
+            except Exception as e:
+                print_error(f"{label} failed: {e}")
+                report.add_section(section_key, {"error": str(e)})
 
-    # Intelligence
+    # Intelligence analysis (runs after all modules complete)
+    print_section("Intelligence Analysis")
     assessment = analyze_findings(report.to_dict())
     report.add_section("intelligence", assessment)
 
@@ -405,6 +448,7 @@ def pivot(
       heavenlyeyes pivot 1.2.3.4 -d 1 -o ./reports
     """
     ensure_config()
+    auto_check_keys(console)
     depth = max(1, min(4, depth))
 
     from heavenlyeyes.engine.stealth import StealthConfig
@@ -470,19 +514,64 @@ def dork(
 
 
 # ════════════════════════════════════════════════════════════════════════
-#  CONFIG COMMAND
+#  SETUP WIZARD
 # ════════════════════════════════════════════════════════════════════════
 
 @app.command()
+def setup():
+    """[bold cyan]Setup Wizard[/bold cyan] — configure API keys interactively.
+
+    \b
+    Walks you through each API key, shows what features it unlocks,
+    and offers to open sign-up pages in your browser.
+    Keys are saved in ~/.heavenlyeyes/config.yaml
+    """
+    banner()
+    from heavenlyeyes.core.config import setup_wizard
+    setup_wizard(console)
+
+
+@app.command()
 def config():
-    """Initialize or show configuration."""
+    """Show current configuration and API key status."""
+    banner()
+    from heavenlyeyes.core.config import (
+        CONFIG_FILE, check_missing_keys, get_api_key,
+        API_KEY_REGISTRY, AI_KEY_REGISTRY, _mask_key,
+    )
+    from rich.table import Table
+    from rich import box
+    import os
+
     ensure_config()
-    from heavenlyeyes.core.config import CONFIG_FILE
-    print_info(f"Config file: {CONFIG_FILE}")
-    print_info("Edit this file to add API keys and customize settings.")
-    print_info("You can also set API keys via environment variables:")
-    print_info("  HEYES_SHODAN, HEYES_HAVEIBEENPWNED, HEYES_HUNTER_IO, HEYES_VIRUSTOTAL")
-    print_info("  ANTHROPIC_API_KEY, OPENAI_API_KEY (for AI synthesis)")
+
+    table = Table(
+        title="[bold]Configuration Status[/bold]",
+        box=box.ROUNDED,
+        border_style="cyan",
+        header_style="bold white on #1a1a2e",
+    )
+    table.add_column("Service", style="white", width=22)
+    table.add_column("Status", width=16, justify="center")
+    table.add_column("Source", style="dim", width=10)
+
+    all_keys = {**API_KEY_REGISTRY, **AI_KEY_REGISTRY}
+    for key_name, info in all_keys.items():
+        val = get_api_key(key_name)
+        if not val and key_name in AI_KEY_REGISTRY:
+            val = os.environ.get(info["env"], "")
+
+        if val:
+            source = "env" if os.environ.get(info["env"]) else "config"
+            status = f"[bold green]✔ {_mask_key(val)}[/bold green]"
+        else:
+            source = "-"
+            status = "[red]✘ Missing[/red]"
+        table.add_row(info["name"], status, source)
+
+    console.print(table)
+    console.print(f"\n[dim]Config file: {CONFIG_FILE}[/dim]")
+    console.print("[dim]Run [bold]heavenlyeyes setup[/bold] to configure missing keys.[/dim]\n")
 
 
 # ════════════════════════════════════════════════════════════════════════
